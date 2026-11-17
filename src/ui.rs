@@ -12,7 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Terminal;
 
 use crate::audio::{AudioCommand, AudioEvent, AudioHandle};
@@ -207,9 +207,54 @@ fn draw_ui(
     ui_state: &UiState,
     list_state: &mut ListState,
 ) {
+    let (name, status_str) = match state.current_track() {
+        Some(t) => (sanitize_for_display(&t.name), status_label(state.status)),
+        None => ("<none>".to_string(), status_label(state.status)),
+    };
+
+    let mut status_text = format!(
+        "Track: {} | Status: {} | Volume: {}% | Keys: ↑/↓ j/k Enter Space +/- q",
+        name, status_str, state.volume
+    );
+    if let Some(err) = &ui_state.last_error {
+        // Error is already sanitized when stored, but sanitize again defensively before render.
+        let safe_err = sanitize_for_display(err);
+        status_text.push_str(&format!(" | Error: {safe_err}"));
+    }
+    let status_text = sanitize_for_display(&status_text);
+
+    // The block borders consume 2 columns and 2 rows; compute the wrapped line count
+    // manually so the Status block always fits exactly (no private API, no clipping).
+    let inner_width = f.area().width.saturating_sub(2).max(1);
+    let mut lines = 1usize;
+    let mut line_len = 0usize;
+    for ch in status_text.chars() {
+        if ch == '\n' {
+            lines += 1;
+            line_len = 0;
+        } else {
+            line_len += 1;
+            if line_len > inner_width as usize {
+                lines += 1;
+                line_len = 0;
+            }
+        }
+    }
+    // +2 for the top and bottom borders of Borders::ALL; cap so the block never eats the screen.
+    let status_height = (lines + 2) as u16;
+    let status_height = status_height.min(f.area().height.saturating_sub(1).max(1));
+    let list_height = f.area().height.saturating_sub(status_height).max(1);
+
+    // The Status block must stay visible in full on narrow terminals: wrap its text and give
+    // the block exactly the height it needs instead of a fixed 4 rows, otherwise the key
+    // hints are silently clipped at the bottom of the window.
+    let status = Paragraph::new(status_text)
+        .wrap(Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL).title("Status"));
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(4)])
+        .constraints([Constraint::Min(list_height), Constraint::Length(status_height)])
         .split(f.area());
 
     let items: Vec<ListItem> = state
@@ -229,24 +274,6 @@ fn draw_ui(
         .highlight_symbol("> ");
 
     f.render_stateful_widget(list, chunks[0], list_state);
-
-    let (name, status_str) = match state.current_track() {
-        Some(t) => (sanitize_for_display(&t.name), status_label(state.status)),
-        None => ("<none>".to_string(), status_label(state.status)),
-    };
-
-    let mut status_text = format!(
-        "Track: {} | Status: {} | Volume: {}% | Keys: ↑/↓ j/k Enter Space +/- q",
-        name, status_str, state.volume
-    );
-    if let Some(err) = &ui_state.last_error {
-        // Error is already sanitized when stored, but sanitize again defensively before render.
-        let safe_err = sanitize_for_display(err);
-        status_text.push_str(&format!(" | Error: {safe_err}"));
-    }
-
-    let status = Paragraph::new(sanitize_for_display(&status_text))
-        .block(Block::default().borders(Borders::ALL).title("Status"));
     f.render_widget(status, chunks[1]);
 }
 
@@ -255,5 +282,49 @@ fn status_label(status: PlaybackStatus) -> &'static str {
         PlaybackStatus::Stopped => "Stopped",
         PlaybackStatus::Playing => "Playing",
         PlaybackStatus::Paused => "Paused",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tracks::Track;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use std::path::PathBuf;
+
+    fn sample_state() -> PlayerState {
+        PlayerState::new(vec![Track {
+            path: PathBuf::from("/music/song.mp3"),
+            name: "song.mp3".to_string(),
+        }])
+    }
+
+    /// Renders the UI in a narrow terminal and asserts the key hints are not clipped.
+    #[test]
+    fn narrow_window_keeps_status_hints_visible() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal init");
+        let state = sample_state();
+        let mut list_state = ListState::default();
+        let ui_state = UiState::default();
+
+        terminal
+            .draw(|f| draw_ui(f, &state, &ui_state, &mut list_state))
+            .expect("draw");
+
+        let buffer = terminal.backend_mut().buffer();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_string())
+            .collect();
+
+        // The key hints must survive as whole words, not be truncated at the right border.
+        assert!(text.contains("Enter"), "Enter hint missing from narrow render");
+        assert!(text.contains("Space"), "Space hint missing from narrow render");
+        assert!(text.contains("q"), "Quit hint missing from narrow render");
+        assert!(text.contains("Status"), "Status block title missing");
+        assert!(text.contains("Tracks"), "Tracks block title missing");
     }
 }

@@ -2,10 +2,10 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
-use first_test::audio::{spawn_audio_engine, AudioCommand};
-use first_test::player::PlayerState;
-use first_test::tracks::discover_tracks;
-use first_test::ui;
+use rust_tui_player::audio::{spawn_audio_engine, AudioCommand};
+use rust_tui_player::player::PlayerState;
+use rust_tui_player::tracks::discover_tracks;
+use rust_tui_player::ui;
 
 fn main() {
     let root = parse_root_arg();

@@ -3,9 +3,9 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use first_test::player::{PlaybackStatus, PlayerAction, PlayerCommand, PlayerState};
-use first_test::sanitize::sanitize_for_display;
-use first_test::tracks::{discover_tracks, Track};
+use rust_tui_player::player::{PlaybackStatus, PlayerAction, PlayerCommand, PlayerState};
+use rust_tui_player::sanitize::sanitize_for_display;
+use rust_tui_player::tracks::{discover_tracks, Track};
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -13,7 +13,7 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let pid = std::process::id();
-    std::env::temp_dir().join(format!("first-test-{prefix}-{pid}-{nanos}"))
+    std::env::temp_dir().join(format!("rust-tui-player-{prefix}-{pid}-{nanos}"))
 }
 
 fn create_file(path: &Path) {
